@@ -1,6 +1,8 @@
 # Geometry Assistant — 立体几何 3D 可视化辅导工具
 
-将立体几何题目数据渲染为交互式 3D 场景。适合高中数学立体几何辅导场景，支持几何体可视化、已知条件高亮、解题步骤标注。
+将立体几何题目数据渲染为交互式 3D 场景。适合高中数学立体几何辅导场景。输入 JSON 格式的几何数据，输出自包含 HTML，双击浏览器即可查看可旋转/缩放的 3D 图形。
+
+作为 CLI 工具，可被任何 AI 编程助手（Codex、Claude Code、Cursor、Copilot Chat 等）通过 shell 调用，也可安装为 Python 包在脚本中直接使用其 API。
 
 ## 功能特性
 
@@ -9,7 +11,7 @@
 - **渐进式解题展示** — 解题步骤逐步显示辅助线、投影点、坐标轴等构造
 - **自包含 HTML 输出** — 生成的 HTML 文件可直接在浏览器打开，无需本地服务器
 - **数据校验** — 内置验证器检测顶点引用、边重复、坐标系配置等常见问题
-- **Codex Skill 集成** — 可作为 Codex 技能使用，通过自然语言描述自动构建几何场景
+- **AI 工具集成** — 纯 CLI 设计，任何 AI 编程助手均可通过 shell 调用；附带 Codex skill 定义文件（SKILL.md）
 
 ## 快速开始
 
@@ -25,7 +27,7 @@ pip install git+https://github.com/mindbeam-vc/geometry-assistant.git
 geometry-assistant problem.json --output pyramid.html
 ```
 
-也支持 Codex skill 直接使用（无需 pip 安装），见下方。
+
 
 ### 1. 编写几何数据 JSON
 
@@ -120,15 +122,17 @@ python scripts/deploy.py problem.json --output pyramid.html
 - `highlights` — 高亮的点/边 ID 列表
 - `annotations` — 文字标注
 
-## 作为 Codex Skill 使用
+## AI 工具集成
 
-本仓库可直接安装为 Codex 几何辅导技能：
+本工具通过标准 CLI 接口设计，任何 AI 编程助手均可直接调用：
 
 ```bash
-codex skill install https://github.com/<your-username>/geometry-assistant
+geometry-assistant problem.json --output output.html
 ```
 
-安装后在 Codex 中描述立体几何题目，模型会自动构建 `geometryData` JSON 并调用 `deploy.py` 生成交互式 3D 图形。
+- **Codex** — 仓库内含 `SKILL.md`，可用 `codex skill install https://github.com/mindbeam-vc/geometry-assistant` 安装为技能
+- **Claude Code / Cursor / Copilot Chat** — pip 安装后，直接在对话中让 AI 构建 `geometryData` JSON 并执行 `geometry-assistant` 命令
+- **任意脚本** — 可作为 Python 库使用：`from geometry_assistant import build_standalone_html, validate_geometry_data`
 
 ## 依赖
 
@@ -151,16 +155,16 @@ geometry-assistant/
 ├── LICENSE
 ├── .gitignore
 ├── assets/
-│   └── template.html            # Three.js 渲染模板（Codex skill 用）
+│   └── template.html            # Three.js 渲染模板
 ├── references/
 │   └── data-format.md           # 数据格式详细说明
 ├── scripts/
-│   └── deploy.py                # 薄封装（向后兼容 Codex skill）
+│   └── deploy.py                # 薄封装（无需 pip 安装可直接运行）
 └── src/
     └── geometry_assistant/      # Python 包
         ├── __init__.py
         ├── core.py              # 核心逻辑（校验 + HTML 生成）
         ├── cli.py               # CLI 入口
         └── assets/
-            └── template.html    # 捆绑模板（pip 安装用）
+            └── template.html    # 捆绑模板
 ```
