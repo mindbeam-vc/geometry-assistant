@@ -1,4 +1,4 @@
-__pycache__/
+﻿__pycache__/
 *.pyc
 *.pyo
 .DS_Store
@@ -9,3 +9,8 @@ node_modules/
 .env
 *.log
 temp_*.json
+
+# Python packaging
+*.egg-info/
+dist/
+build/

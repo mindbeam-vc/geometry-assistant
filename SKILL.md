@@ -7,7 +7,7 @@ metadata:
 
 # 立体几何 3D 可视化
 
-## 使用方式
+0. （推荐） `pip install git+https://github.com/mindbeam-vc/geometry-assistant.git`，然后 `geometry-assistant <json> -o <html>`。 git+https://github.com/mindbeam-vc/geometry-assistant.git，然后 geometry-assistant <json> -o <html>。
 
 1. 将题目几何数据构建为 JSON 对象（格式见 `references/data-format.md`）。
 2. 写入临时 JSON 文件，运行 `python scripts/deploy.py <json文件路径> --output <输出html路径>`。

@@ -13,6 +13,20 @@
 
 ## 快速开始
 
+
+### 0. pip 安装（推荐）
+
+```bash
+pip install git+https://github.com/mindbeam-vc/geometry-assistant.git
+```
+
+安装后，全局可用 `geometry-assistant` 命令：
+```bash
+geometry-assistant problem.json --output pyramid.html
+```
+
+也支持 Codex skill 直接使用（无需 pip 安装），见下方。
+
 ### 1. 编写几何数据 JSON
 
 ```json
@@ -131,14 +145,22 @@ codex skill install https://github.com/<your-username>/geometry-assistant
 
 ```
 geometry-assistant/
-├── SKILL.md                    # Codex 技能定义
+├── pyproject.toml               # pip 包配置（支持 pip install）
+├── SKILL.md                     # Codex 技能定义
 ├── README.md
 ├── LICENSE
 ├── .gitignore
 ├── assets/
-│   └── template.html           # Three.js 渲染模板
+│   └── template.html            # Three.js 渲染模板（Codex skill 用）
 ├── references/
-│   └── data-format.md          # 数据格式详细说明
-└── scripts/
-    └── deploy.py               # 构建脚本（数据校验 + HTML 生成）
+│   └── data-format.md           # 数据格式详细说明
+├── scripts/
+│   └── deploy.py                # 薄封装（向后兼容 Codex skill）
+└── src/
+    └── geometry_assistant/      # Python 包
+        ├── __init__.py
+        ├── core.py              # 核心逻辑（校验 + HTML 生成）
+        ├── cli.py               # CLI 入口
+        └── assets/
+            └── template.html    # 捆绑模板（pip 安装用）
 ```
