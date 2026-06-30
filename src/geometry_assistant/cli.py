@@ -7,6 +7,7 @@ Usage:
 import argparse
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 from geometry_assistant.core import (

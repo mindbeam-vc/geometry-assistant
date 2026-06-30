@@ -1292,12 +1292,13 @@ function getActivePartData(data) {
   const parts = Array.isArray(data.parts) ? data.parts : [];
   const part = parts[currentPartIndex] || null;
   if (!part) return data;
+  const hasConditionFilter = Array.isArray(part.conditionIds);
   const conditionIds = new Set(part.conditionIds || []);
   const stepIds = new Set(part.stepIds || []);
   return {
     ...data,
     activePart: part,
-    conditions: (data.conditions || []).filter((cond) => conditionIds.has(cond.id)),
+    conditions: hasConditionFilter ? (data.conditions || []).filter((cond) => conditionIds.has(cond.id)) : (data.conditions || []),
     solutionSteps: (data.solutionSteps || []).filter((step) => stepIds.has(step.id))
   };
 }

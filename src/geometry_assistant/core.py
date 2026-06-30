@@ -1,5 +1,6 @@
 """Core logic for geometry-assistant: validation, HTML generation, and optional server."""
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -50,6 +51,10 @@ COORDINATE_KEYWORDS = (
     "\u5750\u6807\u7cfb",
     "\u5750\u6807\u6cd5",
     "\u7a7a\u95f4\u76f4\u89d2\u5750\u6807\u7cfb",
+    "\u6cd5\u5411\u91cf",
+    "\u5e73\u9762\u65b9\u7a0b",
+    "\u5939\u89d2\u516c\u5f0f",
+    "\u70b9\u5230\u5e73\u9762",
 )
 DERIVED_KEYWORDS = (
     "\u4f5c",
@@ -61,6 +66,32 @@ DERIVED_KEYWORDS = (
     "\u5750\u6807\u7cfb",
 )
 INITIAL_STEP_KEYS = ("\u5df2\u77e5", "\u521d\u59cb", "\u52a0\u8f7d", "\u89c2\u5bdf")
+PROOF_PROCESS_KEYWORDS = (
+    "\u56e0\u4e3a",
+    "\u6240\u4ee5",
+    "\u6545",
+    "\u7531",
+    "\u53ef\u5f97",
+    "\u8bc1\u660e",
+    "\u8ba1\u7b97",
+    "\u8bbe",
+    "\u4f5c",
+    "\u8fde\u63a5",
+    "\u5f97",
+    "\u5750\u6807",
+    "\u6cd5\u5411\u91cf",
+    "\u2225",
+    "\u22a5",
+    "\u2220",
+    "\u2235",
+    "\u2234",
+    "=",
+)
+THEOREM_ONLY_HINTS = ("\u5b9a\u7406", "\u5b9a\u4e49", "\u6027\u8d28", "\u516c\u5f0f", "\u5224\u5b9a")
+PART_MARKER_RE = re.compile(r"(?:^|[\n\r\uff1b;\u3002])\s*(?:\(\d+\)|\uff08\d+\uff09|[\u2460-\u2473])")
+BASE_FACE_RE = re.compile(r"\u5e95\u9762\s*([A-Z][A-Z][A-Z][A-Z])")
+RIGHT_PRISM_RE = re.compile(r"\u76f4\u4e09\u68f1\u67f1\s*([A-Z]{3})-([A-Z]1[A-Z]1[A-Z]1)")
+GEOMETRY_TOLERANCE = 1e-6
 
 
 def _is_aux_entity(entity):
@@ -135,11 +166,144 @@ def _known_initial_ids(geom_data):
     return known
 
 
+def _count_problem_parts(problem_text):
+    return len(PART_MARKER_RE.findall(problem_text or ""))
+
+
+def _explicit_base_faces(problem_text):
+    return [match.group(1) for match in BASE_FACE_RE.finditer(problem_text or "")]
+
+
+def _text_contains_id(text, entity_id):
+    pattern = rf"(?<![A-Za-z0-9']){re.escape(entity_id)}(?![A-Za-z0-9'])"
+    return re.search(pattern, text or "") is not None
+
+
+def _first_part_marker_index(problem_text):
+    match = PART_MARKER_RE.search(problem_text or "")
+    return match.start() if match else -1
+
+
+def _condition_part_specific_error(condition, problem_text, vertices):
+    split_at = _first_part_marker_index(problem_text)
+    if split_at < 0:
+        return None
+    prefix = problem_text[:split_at]
+    suffix = problem_text[split_at:]
+    for value in _collect_strings(condition.get("targets", {})):
+        if value in vertices and not _text_contains_id(prefix, value) and _text_contains_id(suffix, value):
+            return f"part-specific condition {condition.get('id', '<condition>')} targets {value}; put it in solutionSteps, not global conditions"
+    return None
+
+
+def _axis_direction_error(edge_id, edge, vertices):
+    if edge.get("renderMode") != "axis":
+        return None
+    label = edge.get("axisLabel")
+    start = vertices.get(edge.get("v1"), {}).get("pos")
+    end = vertices.get(edge.get("v2"), {}).get("pos")
+    if not isinstance(start, list) or not isinstance(end, list) or len(start) < 3 or len(end) < 3:
+        return None
+    delta = [end[i] - start[i] for i in range(3)]
+    axis_index = {"x": 0, "y": 1, "z": 2}.get(label)
+    if axis_index is None:
+        return None
+    primary = abs(delta[axis_index])
+    secondary = sum(abs(delta[i]) for i in range(3) if i != axis_index)
+    if primary <= GEOMETRY_TOLERANCE or secondary > GEOMETRY_TOLERANCE:
+        if label == "z":
+            return f"z axis must point upward: coordinate axis edge {edge_id} should change only the third coordinate"
+        return f"coordinate {label} axis edge {edge_id} should change only coordinate {axis_index + 1}"
+    return None
+
+
+def _right_prism_base_errors(geom_data, vertices, faces):
+    errors = []
+    problem_text = geom_data.get("problemText", "")
+    for match in RIGHT_PRISM_RE.finditer(problem_text):
+        base_id = match.group(1)
+        face = faces.get(base_id)
+        if not face:
+            errors.append(f"right prism base face {base_id} is missing")
+            continue
+        if set(face.get("vertices", [])) != set(base_id):
+            errors.append(f"right prism base face {base_id} must use vertices {base_id}")
+            continue
+        base_vertices = [vertices.get(vertex_id) for vertex_id in base_id]
+        if any(not vertex or not isinstance(vertex.get("pos"), list) or len(vertex.get("pos")) < 3 for vertex in base_vertices):
+            continue
+        heights = [vertex["pos"][2] for vertex in base_vertices]
+        if max(heights) - min(heights) > GEOMETRY_TOLERANCE:
+            errors.append(f"right prism base face {base_id} should be horizontal; keep its vertices at the same vertical coordinate")
+        for vertex_id in base_id:
+            top_id = vertex_id + "1"
+            base_vertex = vertices.get(vertex_id)
+            top_vertex = vertices.get(top_id)
+            if not top_vertex or not isinstance(top_vertex.get("pos"), list) or len(top_vertex.get("pos")) < 3:
+                continue
+            base_pos = base_vertex["pos"]
+            top_pos = top_vertex["pos"]
+            if abs(top_pos[0] - base_pos[0]) > GEOMETRY_TOLERANCE or abs(top_pos[1] - base_pos[1]) > GEOMETRY_TOLERANCE or top_pos[2] <= base_pos[2] + GEOMETRY_TOLERANCE:
+                errors.append(f"right prism lateral edge {vertex_id}{top_id} should be vertical with z upward")
+    return errors
+
+
+def _step_process_error(step):
+    text = _step_text(step).strip()
+    compact = re.sub(r"\s+", "", text)
+    if not compact:
+        return f"solution step {step.get('id', '<step>')} needs proof/process text"
+    has_theorem_only_hint = any(hint in compact for hint in THEOREM_ONLY_HINTS)
+    has_process = any(keyword in compact for keyword in PROOF_PROCESS_KEYWORDS)
+    if has_theorem_only_hint and (len(compact) < 18 or not has_process):
+        return (
+            f"solution step {step.get('id', '<step>')} needs proof/process text, "
+            "not only a theorem name"
+        )
+    return None
+
+
 def validate_geometry_data(geom_data):
     """Fail fast on data patterns that repeatedly caused misleading 3D scenes."""
     errors = []
     vertices, edges, faces, duplicate_pairs = _collect_geometry(geom_data)
     known_initial = _known_initial_ids(geom_data)
+    solution_steps = geom_data.get("solutionSteps", [])
+    problem_part_count = _count_problem_parts(geom_data.get("problemText", ""))
+    declared_parts = geom_data.get("parts") or geom_data.get("questionParts") or []
+
+    if problem_part_count >= 2:
+        if len(declared_parts) < problem_part_count:
+            errors.append(
+                f"multi-part problem has {problem_part_count} questions but only {len(declared_parts)} parts"
+            )
+        condition_ids = {condition.get("id") for condition in geom_data.get("conditions", []) if condition.get("id")}
+        for part in declared_parts:
+            if not part.get("stepIds"):
+                errors.append(f"multi-part problem part {part.get('id', '<part>')} needs stepIds")
+            if condition_ids:
+                if not part.get("conditionIds"):
+                    errors.append(f"multi-part problem part {part.get('id', '<part>')} needs conditionIds")
+                else:
+                    for condition_id in part.get("conditionIds", []):
+                        if condition_id not in condition_ids:
+                            errors.append(
+                                f"multi-part problem part {part.get('id', '<part>')} references missing condition {condition_id}"
+                            )
+
+    for base_face_id in _explicit_base_faces(geom_data.get("problemText", "")):
+        face = faces.get(base_face_id)
+        if not face:
+            errors.append(f"explicit pyramid base face {base_face_id} is missing; use {base_face_id} as the base face")
+        elif set(face.get("vertices", [])) != set(base_face_id):
+            errors.append(f"explicit pyramid base face {base_face_id} must use vertices {base_face_id}")
+
+    for step in solution_steps:
+        process_error = _step_process_error(step)
+        if process_error:
+            errors.append(process_error)
+
+    errors.extend(_right_prism_base_errors(geom_data, vertices, faces))
 
     for previous, current, pair, solid_id in duplicate_pairs:
         errors.append(
@@ -158,6 +322,9 @@ def validate_geometry_data(geom_data):
             if vertex_id not in vertices:
                 errors.append(f"edge {edge_id} references missing vertex {vertex_id!r}")
         if render_mode == "axis":
+            axis_error = _axis_direction_error(edge_id, edge, vertices)
+            if axis_error:
+                errors.append(axis_error)
             if not edge.get("auxiliary"):
                 errors.append(f"coordinate axis edge {edge_id} must be auxiliary")
             if edge.get("axisLabel") not in {"x", "y", "z"}:
@@ -195,9 +362,9 @@ def validate_geometry_data(geom_data):
                 errors.append(
                     f"coordinate step {step.get('id', '<step>')} needs x/y/z coordinate axis edges"
                 )
-            if axis_edge_ids and not (axis_edge_ids & highlights):
+            if axis_edge_ids and not axis_edge_ids.issubset(highlighted_ids):
                 errors.append(
-                    f"coordinate step {step.get('id', '<step>')} must reveal coordinate axis edges in highlights"
+                    f"coordinate step {step.get('id', '<step>')} must reveal coordinate axis edges in highlights before coordinate calculations"
                 )
         if any(keyword in text for keyword in DERIVED_KEYWORDS):
             for item_id in highlights:
@@ -229,6 +396,9 @@ def validate_geometry_data(geom_data):
             errors.append(f"auxiliary entity {entity_id} is never revealed by a solution step")
 
     for condition in geom_data.get("conditions", []):
+        part_specific_error = _condition_part_specific_error(condition, geom_data.get("problemText", ""), vertices)
+        if part_specific_error:
+            errors.append(part_specific_error)
         for key in ("target", "line", "plane"):
             value = condition.get(key)
             if (
@@ -247,6 +417,9 @@ def validate_geometry_data(geom_data):
                 or condition.get("line")
                 or targets.get("segment")
                 or targets.get("vertex")
+                or targets.get("lineA")
+                or targets.get("lineB")
+                or targets.get("line2")
             )
             if not marker_target:
                 errors.append(
