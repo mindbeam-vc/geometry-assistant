@@ -1,11 +1,6 @@
-"""Core logic for geometry-assistant: validation, HTML generation, and optional server."""
+"""Core logic for geometry-assistant: validation and standalone HTML generation."""
 import json
 import re
-import shutil
-import subprocess
-import sys
-import tempfile
-import time
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -25,22 +20,6 @@ except ImportError:  # Python < 3.9
         return _resource_read_text(
             "geometry_assistant.assets", "template.html", encoding="utf-8"
         )
-
-# ---------------------------------------------------------------------------
-# Server defaults (used only with --serve)
-# ---------------------------------------------------------------------------
-PORT = 8080
-
-
-def _find_node():
-    node = shutil.which("node") or shutil.which("node.exe")
-    if node:
-        return node
-    # Fallback for Codex runtime on Windows (legacy)
-    candidate = Path.home() / ".cache" / "codex-runtimes" / "codex-primary-runtime" / "dependencies" / "node" / "bin" / "node.exe"
-    if candidate.exists():
-        return str(candidate)
-    return None
 
 # ---------------------------------------------------------------------------
 # Validation constants
@@ -249,15 +228,19 @@ def _right_prism_base_errors(geom_data, vertices, faces):
 
 
 def _step_process_error(step):
+    step_id = step.get('id', '<step>')
+    rules = step.get('rules') or step.get('usedRules') or step.get('basis')
+    if not isinstance(rules, list) or not any(str(rule).strip() for rule in rules):
+        return f"solution step {step_id} needs non-empty rules listing the theorem/corollary/formula used in this step"
     text = _step_text(step).strip()
     compact = re.sub(r"\s+", "", text)
     if not compact:
-        return f"solution step {step.get('id', '<step>')} needs proof/process text"
+        return f"solution step {step_id} needs proof/process text"
     has_theorem_only_hint = any(hint in compact for hint in THEOREM_ONLY_HINTS)
     has_process = any(keyword in compact for keyword in PROOF_PROCESS_KEYWORDS)
     if has_theorem_only_hint and (len(compact) < 18 or not has_process):
         return (
-            f"solution step {step.get('id', '<step>')} needs proof/process text, "
+            f"solution step {step_id} needs proof/process text, "
             "not only a theorem name"
         )
     return None
@@ -464,46 +447,3 @@ def build_standalone_html(geom_data, template_text=None):
         'fetch("problems/current.json", { cache: "no-store" })',
         'fetch("__standalone_disabled_current.json", { cache: "no-store" })',
     )
-
-
-def _ensure_port_free():
-    try:
-        subprocess.run(
-            "taskkill /F /IM node.exe",
-            shell=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=5,
-        )
-    except Exception:
-        pass
-    time.sleep(0.5)
-
-
-def start_server(serve_dir):
-    """Start a minimal Node HTTP server on PORT, serving files from serve_dir."""
-    node = _find_node()
-    if not node:
-        raise RuntimeError(
-            "Node.js is required for --serve but was not found. Install Node.js or omit --serve."
-        )
-    server_js = Path(serve_dir) / "server.js"
-    server_js.write_text(
-        'const h=require("http"),fs=require("fs"),p=require("path");'
-        'const s=h.createServer((r,res)=>{'
-        'let fp=r.url==="/"?"/index.html":r.url;'
-        "fp=p.join(__dirname,fp);"
-        'fs.readFile(fp,(e,d)=>{if(e){res.writeHead(404);res.end("404")}else{'
-        'const t={".html":"text/html",".js":"text/javascript",".css":"text/css"};'
-        'res.writeHead(200,{"Content-Type":t[p.extname(fp)]||"text/plain"});'
-        "res.end(d)}})});"
-        f's.listen({PORT},"127.0.0.1",()=>console.log("server ready"));',
-        encoding="utf-8",
-    )
-    subprocess.Popen(
-        [node, str(server_js)],
-        cwd=str(serve_dir),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    time.sleep(1)

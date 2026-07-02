@@ -40,7 +40,7 @@ body{display:flex;flex-direction:column}
 .sidebar-section{margin-bottom:20px}
 .sidebar-section h3{font-size:13px;font-weight:600;color:#495057;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid #dee2e6}
 #problem-text{font-size:14px;line-height:1.8;color:#343a40;white-space:pre-wrap}
-.math-sqrt{display:inline-flex;align-items:flex-start;gap:1px}.math-radicand{border-top:1px solid currentColor;padding:0 2px}.math-inline sup{font-size:.72em;line-height:0}.math-inline sub{font-size:.72em;line-height:0}.vertex-label{font-size:18px;font-weight:800;color:#1f2937;background:rgba(255,255,255,0.9);padding:2px 7px;border-radius:5px;border:1px solid rgba(31,41,55,0.25);font-family:Arial,sans-serif;pointer-events:none;text-shadow:0 0 3px rgba(255,255,255,0.95);box-shadow:0 1px 3px rgba(0,0,0,0.12)}.vertex-label sub{font-size:12px}.math-label{font-weight:bold;background:rgba(255,255,255,0.82);padding:1px 5px;border-radius:3px;pointer-events:none}
+.math-sqrt{display:inline-flex;align-items:flex-start;gap:1px}.math-radicand{border-top:1px solid currentColor;padding:0 2px}.math-frac{display:inline-flex;flex-direction:column;align-items:center;vertical-align:middle;line-height:1}.math-frac-num{border-bottom:1px solid currentColor;padding:0 3px}.math-frac-den{padding:1px 3px 0}.math-inline sup{font-size:.72em;line-height:0}.math-inline sub{font-size:.72em;line-height:0}.vertex-label{font-size:18px;font-weight:800;color:#1f2937;background:rgba(255,255,255,0.9);padding:2px 7px;border-radius:5px;border:1px solid rgba(31,41,55,0.25);font-family:Arial,sans-serif;pointer-events:none;text-shadow:0 0 3px rgba(255,255,255,0.95);box-shadow:0 1px 3px rgba(0,0,0,0.12)}.vertex-label sub{font-size:12px}.math-label{font-weight:bold;background:rgba(255,255,255,0.82);padding:1px 5px;border-radius:3px;pointer-events:none}
 .part-tabs{display:flex;gap:6px;flex-wrap:wrap}.part-tab{border:1px solid #dee2e6;background:#fff;color:#495057;border-radius:6px;padding:5px 10px;font-size:13px;cursor:pointer}.part-tab.active{background:#339af0;border-color:#339af0;color:#fff;font-weight:700}
 .condition-item{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px;color:#495057;border-bottom:1px solid #f1f3f5}
 .condition-item .color-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
@@ -205,6 +205,11 @@ document.querySelectorAll(".view-mode-btn button").forEach((btn) => {
 
 function appendFormattedMath(parent, text) {
   const source = String(text ?? "");
+  const fraction = splitTopLevelFraction(source);
+  if (fraction) {
+    appendFormattedFraction(parent, fraction[0], fraction[1]);
+    return;
+  }
   let i = 0;
   function appendPlain(value) { if (value) parent.appendChild(document.createTextNode(value)); }
   function appendSup(value) { const sup = document.createElement("sup"); sup.textContent = value; parent.appendChild(sup); }
@@ -255,6 +260,37 @@ function appendFormattedMath(parent, text) {
     appendPlain(source[i]);
     i++;
   }
+}
+
+function splitTopLevelFraction(source) {
+  const text = String(source ?? "").trim();
+  if (!text || /\s/.test(text)) return null;
+  let depth = 0;
+  let slashIndex = -1;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "(") depth++;
+    else if (text[i] === ")") depth--;
+    else if (text[i] === "/" && depth === 0) {
+      if (slashIndex >= 0) return null;
+      slashIndex = i;
+    }
+  }
+  if (slashIndex <= 0 || slashIndex >= text.length - 1) return null;
+  return [text.slice(0, slashIndex), text.slice(slashIndex + 1)];
+}
+
+function appendFormattedFraction(parent, numerator, denominator) {
+  const wrap = document.createElement("span");
+  wrap.className = "math-frac";
+  const num = document.createElement("span");
+  num.className = "math-frac-num";
+  appendFormattedMath(num, numerator);
+  const den = document.createElement("span");
+  den.className = "math-frac-den";
+  appendFormattedMath(den, denominator);
+  wrap.appendChild(num);
+  wrap.appendChild(den);
+  parent.appendChild(wrap);
 }
 
 function createMathSpan(text, className) {
@@ -879,6 +915,43 @@ function makeRightAngleMarker(vertexId, sideAId, sideBId, color) {
   return marker;
 }
 
+function getEdgeEndpointIds(edgeId) {
+  const edge = _findEdgeById(edgeId);
+  const data = edge && edge.line && edge.line.userData;
+  if (!data || !data.v1 || !data.v2) return null;
+  return [data.v1, data.v2];
+}
+
+function getCommonVertexForEdges(sideAId, sideBId) {
+  const a = getEdgeEndpointIds(sideAId);
+  const b = getEdgeEndpointIds(sideBId);
+  if (!a || !b) return null;
+  return a.find((id) => b.includes(id)) || null;
+}
+
+function getRightAngleDescriptor(cond) {
+  const targets = cond.targets || {};
+  if (targets.vertex && Array.isArray(targets.sides) && targets.sides.length >= 2) {
+    return { vertex: targets.vertex, sides: [targets.sides[0], targets.sides[1]] };
+  }
+  const sideA = targets.segment || targets.line || targets.lineA || targets.line1;
+  const sideB = targets.line2 || targets.lineB || targets.segment2;
+  if (sideA && sideB) {
+    const vertex = getCommonVertexForEdges(sideA, sideB);
+    if (vertex) return { vertex, sides: [sideA, sideB] };
+  }
+  return null;
+}
+
+function renderRightAngleCondition(cond) {
+  const rightAngle = getRightAngleDescriptor(cond);
+  if (!rightAngle) return false;
+  const marker = makeRightAngleMarker(rightAngle.vertex, rightAngle.sides[0], rightAngle.sides[1], cond.highlightColor || 0xff6b6b);
+  if (!marker) return false;
+  makeAnnotation(marker, cond.id);
+  return true;
+}
+
 function renderLinePlanePerpendicularMarker(cond) {
   const targets = cond.targets || {};
   const segment = targets.segment || targets.line;
@@ -936,39 +1009,58 @@ function renderPerpendicular(cond) {
   if (!sceneEntities.conditions.has(cond.id)) {
     sceneEntities.conditions.set(cond.id, { annotations: [], visible: false });
   }
-  const targets = cond.targets || {};
-  if (targets.vertex && Array.isArray(targets.sides) && targets.sides.length >= 2) {
-    const marker = makeRightAngleMarker(targets.vertex, targets.sides[0], targets.sides[1], cond.highlightColor || 0xff6b6b);
-    if (marker) makeAnnotation(marker, cond.id);
-    return;
-  }
+  if (renderRightAngleCondition(cond)) return;
   renderLinePlanePerpendicularMarker(cond);
 }
 function renderParallel(cond) {}
 
 function renderLength(cond) {
-  const pos = getMidpoint(cond.targets.segment);
+  annotateSegmentLength(cond.targets.segment, getConditionLengthLabel(cond), "#2b8a3e", cond.id);
+}
+
+function annotateSegmentLength(segmentId, labelText, color, condId) {
+  const text = String(labelText ?? "").trim();
+  if (!segmentId || !text) return;
+  const pos = getMidpoint(segmentId);
   if (!pos) return;
   pos.y += 0.08;
-  const lbl = makeLabel(String(cond.value || ""), "#2b8a3e", pos);
-  makeAnnotation(lbl, cond.id);
+  const lbl = makeLabel(text, color, pos);
+  makeAnnotation(lbl, condId);
+}
+
+function getConditionLengthLabel(cond) {
+  const exactLabel = cond.label ?? cond.displayValue ?? cond.valueText ?? cond.exactValue;
+  if (exactLabel !== undefined && exactLabel !== null && String(exactLabel).trim() !== "") return String(exactLabel);
+  if (cond.value !== undefined && cond.value !== null && String(cond.value).trim() !== "") return String(cond.value);
+  const targets = cond.targets || {};
+  const length = targets.segment ? getSegmentLength(targets.segment) : null;
+  return Number.isFinite(length) ? length.toFixed(2) : "";
+}
+
+function getSegmentLength(segmentId) {
+  const eid = _findEdgeIdById(segmentId);
+  const edge = eid ? sceneEntities.edges.get(eid) : null;
+  const data = edge && edge.line && edge.line.userData;
+  if (!data) return null;
+  const p1 = getVertexPos(data.v1);
+  const p2 = getVertexPos(data.v2);
+  return p1 && p2 ? p1.distanceTo(p2) : null;
 }
 
 function renderEqualLength(cond) {
   if (!sceneEntities.conditions.has(cond.id)) {
     sceneEntities.conditions.set(cond.id, { annotations: [], visible: false });
   }
+  const targets = cond.targets || {};
+  const labelText = getConditionLengthLabel(cond);
+  (targets.segments || []).forEach((segmentId) => {
+    annotateSegmentLength(segmentId, labelText, "#2b8a3e", cond.id);
+  });
 }
 
 function renderAngle(cond) {
-  if (cond.type === "right-angle") {
-    const targets = cond.targets || {};
-    if (targets.vertex && Array.isArray(targets.sides) && targets.sides.length >= 2) {
-      const marker = makeRightAngleMarker(targets.vertex, targets.sides[0], targets.sides[1], cond.highlightColor || 0xff6b6b);
-      if (marker) makeAnnotation(marker, cond.id);
-      return;
-    }
-  }  const v = cond.targets.vertex;
+  if (cond.type === "right-angle" && renderRightAngleCondition(cond)) return;
+  const v = cond.targets.vertex;
   const sides = cond.targets.sides || [];
   const pos = getVertexPos(v);
   const p1 = getMidpoint(sides[0]); const p2 = getMidpoint(sides[1]);
@@ -1067,6 +1159,7 @@ function applyHighlights() {
       const entry = sceneEntities.conditions.get(cond.id);
       if (!entry || entry.visible === false) return;
       const color = new THREE.Color(cond.highlightColor || '#ff6b6b');
+      const faceColor = softenHighlightColor(color);
       const targets = cond.targets || {};
       // ── 收集要高亮的 边ID ──
       // 支持: segment / line / lineA / lineB / line1 / line2 / segments[] / segment1/segment2
@@ -1080,6 +1173,8 @@ function applyHighlights() {
       if (Array.isArray(targets.segments)) edgeIds.push(...targets.segments);
       if (targets.segment1) edgeIds.push(targets.segment1);
       if (targets.segment2) edgeIds.push(targets.segment2);
+      const rightAngle = getRightAngleDescriptor(cond);
+      if (rightAngle) edgeIds.push(...rightAngle.sides);
       // ── 收集要高亮的 顶点ID ──
       const vertexIds = [];
       if (targets.vertex) vertexIds.push(targets.vertex);
@@ -1150,21 +1245,54 @@ function applyHighlights() {
         }
       });
       // ── 面高亮（半透明色块）──
-      faceIds.forEach((fid) => {
+      faceIds.forEach((fid, faceIndex) => {
         const face = sceneEntities.faces.get(fid);
         if (!face) return;
-        face.mesh.material.color.copy(color);
-        face.mesh.material.opacity = 0.45;
-        face.mesh.material.transparent = true;
-        face.mesh.material.side = THREE.DoubleSide;
-        face.mesh.material.depthWrite = false;
-        face.mesh.material.needsUpdate = true;
-        face.mesh.visible = true;
+        applyFaceHighlight(face, getFaceHighlightColor(faceIndex));
       });
     });
   }
 }
+const SOFT_FACE_HIGHLIGHT_COLOR = new THREE.Color().setHSL(0.58, 0.82, 0.6);
+const FACE_HIGHLIGHT_HUES = [0.58, 0.36, 0.02, 0.76, 0.13, 0.50];
+const FACE_HIGHLIGHT_SATURATION = 0.82;
+const FACE_HIGHLIGHT_LIGHTNESS = 0.6;
+const FACE_HIGHLIGHT_EMISSIVE = 0.16;
+const SOFT_FACE_HIGHLIGHT_OPACITY = 0.46;
 
+function getFaceHighlightColor(index) {
+  return new THREE.Color().setHSL(
+    FACE_HIGHLIGHT_HUES[index % FACE_HIGHLIGHT_HUES.length],
+    FACE_HIGHLIGHT_SATURATION,
+    FACE_HIGHLIGHT_LIGHTNESS
+  );
+}
+
+function softenHighlightColor(color) {
+  return SOFT_FACE_HIGHLIGHT_COLOR.clone();
+}
+
+function collectReferencedFaceIdsFromText(text) {
+  const source = String(text ?? "");
+  const ids = [];
+  sceneEntities.faces.forEach((face, id) => {
+    if (source.includes(id)) ids.push(id);
+  });
+  return ids;
+}
+
+function applyFaceHighlight(face, color, opacity = 0.28) {
+  if (!face || !face.mesh) return;
+  face.mesh.material.color.copy(color);
+  if (face.mesh.material.emissive) face.mesh.material.emissive.copy(color).multiplyScalar(FACE_HIGHLIGHT_EMISSIVE);
+  face.mesh.material.opacity = opacity;
+  face.mesh.material.transparent = true;
+  face.mesh.material.side = THREE.DoubleSide;
+  face.mesh.material.depthWrite = false;
+  face.mesh.material.visible = true;
+  face.mesh.material.needsUpdate = true;
+  face.mesh.visible = true;
+}
 // ---------- Task 5: Step Manager ----------
 let currentStep = -1;
 
@@ -1186,15 +1314,19 @@ function applyStep(data, stepIndex) {
   // 先把每个 id 分类到 hlVerts / hlEdges。
   const hlVerts = new Set();
   const hlEdges = new Set();
+  const hlFaces = new Set();
   raw.forEach((id) => {
     if (typeof id !== "string") return;
     if (sceneEntities.vertices.has(id)) {
       hlVerts.add(id);
+    } else if (sceneEntities.faces.has(id)) {
+      hlFaces.add(id);
     } else {
       const eid = _findEdgeIdById(id);
       if (eid) hlEdges.add(eid);
     }
   });
+  collectReferencedFaceIdsFromText([step.title, step.theorem].filter(Boolean).join("\n")).forEach((id) => hlFaces.add(id));
   // 保留"两端点都在高亮顶点集中 → 该边也高亮"的旧行为
   sceneEntities.edges.forEach((e, id) => {
     if (hlEdges.has(id)) return;
@@ -1209,6 +1341,18 @@ function applyStep(data, stepIndex) {
     const isHL = hlEdges.has(id);
     e._solidMat.color.set(isHL ? 0xff922b : 0x222222);
     e._dashedMat.color.set(isHL ? 0xff922b : 0x222222);
+  });
+  let highlightedFaceIndex = 0;
+  sceneEntities.faces.forEach((face, id) => {
+    if (hlFaces.has(id)) applyFaceHighlight(face, getFaceHighlightColor(highlightedFaceIndex++), SOFT_FACE_HIGHLIGHT_OPACITY);
+    else if (face.mesh && !isAuxiliaryEntity(face)) {
+      face.mesh.material.color.set(0xffffff);
+      face.mesh.material.opacity = 0.0;
+      face.mesh.material.transparent = true;
+      if (face.mesh.material.emissive) face.mesh.material.emissive.set(0x000000);
+      face.mesh.material.needsUpdate = true;
+      face.mesh.visible = false;
+    }
   });
   stepAnnotations.forEach((a) => scene.remove(a));
   stepAnnotations = [];
@@ -1409,10 +1553,18 @@ function renderStepTheoremLines(container, theoremText) {
   lines.forEach((line, index) => {
     const row = document.createElement("span");
     row.className = "step-theorem-line math-inline";
-    if (index === 0) row.appendChild(document.createTextNode("定理: "));
     appendFormattedMath(row, line);
     container.appendChild(row);
   });
+}
+
+function renderStepRulesLines(container, step) {
+  const rules = step.rules || step.usedRules || step.basis || [];
+  if (!Array.isArray(rules) || rules.length === 0) return;
+  const row = document.createElement("span");
+  row.className = "step-theorem-line math-inline";
+  appendFormattedMath(row, rules.filter(Boolean).join("\\uff1b"));
+  container.appendChild(row);
 }
 
 function renderStepsList(data) {
@@ -1430,10 +1582,11 @@ function renderStepsList(data) {
     header.appendChild(status);
     header.appendChild(title);
     item.appendChild(header);
-    if (step.theorem) {
+    if (step.theorem || step.rules || step.usedRules || step.basis) {
       const theorem = document.createElement("div");
       theorem.className = "step-theorem";
-      renderStepTheoremLines(theorem, step.theorem);
+      renderStepRulesLines(theorem, step);
+      if (step.theorem) renderStepTheoremLines(theorem, step.theorem);
       item.appendChild(theorem);
     }
     item.addEventListener("click", () => applyStep(data, i));

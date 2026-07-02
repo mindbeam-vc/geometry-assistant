@@ -2,7 +2,7 @@
 """CLI entry point for geometry-assistant.
 
 Usage:
-    geometry-assistant <json_file> [--output <path>] [--serve]
+    geometry-assistant <json_file> [--output <path>]
 """
 import argparse
 import json
@@ -10,29 +10,17 @@ import sys
 import tempfile
 from pathlib import Path
 
-from geometry_assistant.core import (
-    build_standalone_html,
-    validate_geometry_data,
-    start_server,
-    _ensure_port_free,
-)
+from geometry_assistant.core import build_standalone_html, validate_geometry_data
 
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description="Export geometryData as a standalone HTML page."
     )
-    parser.add_argument(
-        "json_file", help="Path to geometryData JSON file"
-    )
+    parser.add_argument("json_file", help="Path to geometryData JSON file")
     parser.add_argument(
         "--output", "-o",
         help="Output HTML path (default: geometry_skill/index.html under system temp)",
-    )
-    parser.add_argument(
-        "--serve",
-        action="store_true",
-        help="Start a local HTTP preview server (requires Node.js)",
     )
     return parser.parse_args(argv)
 
@@ -58,13 +46,7 @@ def main(argv=None):
     )
     out_file.parent.mkdir(parents=True, exist_ok=True)
     out_file.write_text(build_standalone_html(geom_data), encoding="utf-8")
-
-    if args.serve:
-        _ensure_port_free()
-        start_server(str(out_file.parent))
-        print(f"http://localhost:8080")
-    else:
-        print(str(out_file.resolve()))
+    print(str(out_file.resolve()))
 
 
 if __name__ == "__main__":

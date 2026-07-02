@@ -1,74 +1,64 @@
----
+﻿---
 name: geometry-assistant
-description: 将立体几何题目数据渲染为交互式 3D 场景。当用户需要可视化几何体、已知条件高亮、解题步骤标注时使用。适合高中数学立体几何辅导场景。输入为 geometryData JSON，默认输出为可直接打开的自包含 HTML；本地 HTTP 服务器只是可选预览方式。
+description: Use when rendering high-school solid-geometry problem data into an interactive 3D standalone HTML artifact with known-condition highlights, step-by-step constructions, faces, polygons, line-plane angles, or dihedral angles.
 metadata:
-  short-description: 立体几何 3D 可视化辅导工具
+  short-description: 立体几何 3D 自包含 HTML 可视化
 ---
 
-# 立体几何 3D 可视化
+# Geometry Assistant
 
-0. （推荐） `pip install git+https://github.com/mindbeam-vc/geometry-assistant.git`，然后 `geometry-assistant <json> -o <html>`。 git+https://github.com/mindbeam-vc/geometry-assistant.git，然后 geometry-assistant <json> -o <html>。
+## 技术方案
 
-1. 将题目几何数据构建为 JSON 对象（格式见 `references/data-format.md`）。
-2. 写入临时 JSON 文件，运行 `python scripts/deploy.py <json文件路径> --output <输出html路径>`。
-3. 默认生成一份自包含 HTML，直接打开该 HTML 即可查看 3D 图形；服务器只是可选预览方式。
-4. 只有明确需要 HTTP 预览时，才追加 `--serve`。不要把启动服务器作为生成图形的必要步骤。
+SELF_CONTAINED_HTML_ONLY：本 skill 只交付自包含 HTML 文件。生成结果必须能直接作为一个 .html 文件交给用户打开，不能要求用户启动服务端，不能把 http://localhost:8080 作为预览或交付地址。
+
+已淘汰的 localhost/--serve 方案只保留在 archive/legacy-localhost-preview.md 中作为历史记录，不属于当前工作流。遇到浏览器已经打开 localhost 页面时，不要沿用该页面判断结果；应重新生成 HTML 文件并让用户打开该文件。
+
+## 标准流程
+
+1. 构建 geometryData JSON，格式见 references/data-format.md。
+2. 写入临时 JSON 文件。
+3. 运行 python scripts/deploy.py <json文件路径> --output <输出html路径>，或 pip 安装后运行 geometry-assistant <json文件路径> -o <输出html路径>。
+4. 交付输出的 .html 文件路径。不要启动本地服务器。
+5. 交付前必须验证：validator 通过、HTML 中已嵌入 window.__GEOMETRY_DATA__、module script 语法通过 node --check。
 
 ## 数据构建要点
 
-- 坐标系：`pos: [x, z, y]`（Three.js y轴=高度，网格平面 y=-1）。
-- 坐标轴语义固定：`axisLabel: "x"` 只改变第 1 坐标，`axisLabel: "y"` 只改变第 2 坐标，`axisLabel: "z"` 表示 z 轴；z 轴必须只改变第 3 坐标并向上显示；不要把 z 轴沿侧面方向放倒。
-- 直三棱柱 `ABC-A1B1C1` 默认以 `ABC` 为基准底面、`A1B1C1` 为上底面；`ABC` 的三个顶点应在同一竖直高度，`AA1/BB1/CC1` 应沿 z 轴向上。
-- 顶点 ID 用大写字母 A-Z，示例数据用 A~G（含中点）。
-- 边 ID 用两个顶点字母拼接（如 `"AB"`, `"DA"`）。
-- 已知条件类型：`perpendicular`, `parallel`, `length`, `equal-length`, `midpoint`, `angle`, `right-angle`。
-- 解题步骤中的 `highlights` 可混用顶点 ID 和边 ID。
+- 坐标使用 pos: [x, z, y]，第三个坐标是竖直高度。
+- 顶点 ID 用大写字母；边 ID 用两端点拼接，如 AB、PA。
+- 面 ID 用顶点顺序拼接，如 ABC、PAB、PAM。
+- conditions 只放题目直接给出的已知条件。
+- 用户手动添加的标注不需要反向更新题目已知条件。
+- 题目已知长度可用 valueText、displayValue、label 或 exactValue 提供精确显示，例如 2√2、sqrt(2)/2、3/4。
 
-## 已知条件与解题构造的边界
+## 高亮规则
 
-- `conditions` 只放题面直接给出、且可以直接落到原始图形上的对象或关系，例如点在某条棱上、两条已画线段等长、原始棱垂直或平行。
-- 只在某个小问中给出的附加对象或假设，例如“第（1）问：若 M 是 AC 的中点”，不能放进全局 `conditions`；应在对应小问的 `solutionSteps` 中引入，并标为辅助构造。
-- 不能把需要推理、作辅助线、作投影、构造垂线或确定平面角后才能画出的信息放进 `conditions`，必须在 `solutionSteps` 中逐步显示。
-- 点到平面的距离、线面角、二面角、线与面的夹角、投影点、垂足、截面平面角、平移后的等角，默认都属于解题构造，除非题面已经明确给出相应辅助点或辅助线。
-- 生成图时要保护学生的独立思考：初始图只展示题面直接给出的结构；辅助点、投影线、垂线、平面角和转化后的角，随着解题步骤逐步显示。
-- 例：题面说“EF 与平面 ABC 所成角为 β”时，不能在已知条件中直接画出投影点 P、FP⊥平面 ABC 或 ∠FEP=β；应在步骤中先作 P，再说明 β = ∠FEP。
-- 例：题面说“二面角 F-BC-A 的平面角为 γ”时，不能一开始直接画出 H、HP⊥BC、HF⊥BC；应在步骤中构造平面角 γ。
+- 选中的面、多边形、线面角、面面角，对应面或多边形必须高亮。
+- 面高亮统一使用半透明柔和蓝色，避免橙色或强饱和色。
+- solutionSteps[].highlights 可混用顶点、边、面 ID。
+- 若步骤文字中提到已有 face ID，例如 PAM、PAC，也应纳入高亮，避免二面角说明中漏高亮两个面。
+- length 和 equal-length 已知条件应在线段中点显示题目给出的精确长度标签；只限题目已知条件。
 
+## 解题展示边界
 
-## 交付前硬性自检
+- 初始图只展示题面直接给出的结构。
+- 辅助点、投影线、垂线、平面角、坐标轴等随 solutionSteps 逐步显示。
+- 线面角、二面角、截面平面角等默认属于解题构造，不应放进全局 conditions，除非题面已明确给出对应辅助对象。
+- 多问问题必须使用 parts 或 questionParts，并为每个 part 指定 stepIds 和 conditionIds。
+- 每个 solutionSteps[].theorem 必须写出必要证明、计算或构造过程，不能只写定理名。
 
-- 交付前必须运行 `python scripts/deploy.py <json文件路径> --output <输出html路径>` 或 `geometry-assistant <json文件路径> -o <输出html路径>`；如果 validator 报错，必须先修 JSON，不得把未校验的 geometryData 交给用户。
-- 多小问题目必须有 `parts`（或兼容字段 `questionParts`），每个 part 必须包含对应 `stepIds` 和 `conditionIds`；题面出现（1）（2）、①② 等明确编号时，不得省略拆分，且不得让已知条件列表在切换小问后变空。
-- 每个 `solutionSteps[].theorem` 必须写出必要的证明过程、计算过程或构造过程；不能只写定理名称，例如“线面垂直判定定理”“二面角定义”“向量夹角公式”。
-- 题干明确写出“底面ABCD”“底面 ABCD”等时，必须把 `ABCD` 建为四边形底面 face，并在初始步骤高亮；不要把侧面或辅助三角形误当作棱锥底面。
-- 若步骤使用坐标法、空间直角坐标系、法向量、平面方程、夹角公式或点到平面距离公式，图形中必须在首次使用该方法的步骤同步显示 x/y/z 坐标轴。
-- 坐标轴必须使用 `renderMode: "axis"` 和 `auxiliary: true`；轴端内部点使用 `axisEndpoint: true` 且 `label: ""`，并把轴线和轴端点加入首次坐标步骤的 `highlights`。
+## 坐标系规则
 
-## 题目小问拆分规则
+- 使用坐标法、法向量、平面方程、向量夹角公式或点到平面距离公式的步骤，必须同步显示 x/y/z 坐标轴。
+- 坐标轴使用 renderMode: "axis" 和 auxiliary: true。
+- 轴端点使用 axisEndpoint: true 和 label: ""，不要显示成普通几何点。
 
-- 是否拆分 `questionParts` / `solutionSteps` 要看题目原文，而不是看解题过程有几段构造。
-- 题目明确编号为（1）（2）或 `①②`、`ⅠⅡ` 等多问结构时，必须按原题小问拆分；例如“（1）求证 BC⊥平面 PAB；（2）求二面角 A-PC-B 的大小”应拆成两个问题。
-- 如果题目只有一个求解目标，例如一个选择题只问某个大小关系或某个数值，即使解题时需要多个辅助构造，也保持一个问题，不要为了配合图形构造或推理阶段硬拆成多个小问。
-- 多问题的步骤可按小问归属组织：第一问的证明步骤放在第一问下，第二问的求角/求值步骤放在第二问下；公共准备步骤可以放在最早需要它的小问中，或作为清晰标注的公共步骤。
+## 垂直与直角标记
 
-## 坐标系显示规则
-
-- 如果某个小问或某个解题步骤需要建立坐标系、使用坐标法、法向量、平面方程、点到平面距离公式或向量夹角公式，图形上必须在该步骤同步显示坐标系。
-- 坐标系应作为辅助构造处理：初始隐藏，在首次使用坐标法的步骤中逐步显示，不要放入题面已知条件。
-- 坐标轴必须画成带箭头的轴线，并在箭头末端标记 x、y、z；不要把 x/y/z 画成可见端点或普通几何点。
-- 坐标轴实体应使用 `renderMode: "axis"` 且 `auxiliary: true`，轴向定位点可用 `axisEndpoint: true` 作为内部点，但必须隐藏点和端点标签；轴线加入对应 `solutionSteps[].highlights`，确保点击该步骤时才出现。
-- 原点优先选题解中自然使用的点，例如坐标写作 D(0,0,0) 时，用 D 作为原点，不额外制造重复原点；只需从 D 引出 x、y、z 轴。
-
-
-## 垂直与直角标记规则
-
-- 题面已知条件中出现垂直、直角或 90° 时，图上必须画标准 L 形直角标记，不能只高亮线段或只在文字中说明。
-- 线线垂直或正方形/矩形角，可在对应顶点沿两条边画 L 形标记。
-- 线面垂直，例如 PD⊥平面 ABCD，应在垂足处结合垂线和面内一条可见边画 L 形标记。
-- 这些 L 形标记属于已知条件注记，点击已知条件时高亮/显示；不要放进解题步骤作为新推导。
+- 题面已知条件出现垂直、直角或 90° 时，图上必须画 L 形直角标记。
+- 这些标记属于已知条件注记，点击对应条件时显示，不要作为新推导塞进步骤。
 
 ## 运行后注意
 
-- 生成的 HTML 不依赖本地 Node 服务器；如果模板仍通过 importmap 加载 Three.js CDN，则打开 HTML 时需要能访问对应 CDN。
-- 使用 `--serve` 时才需要 Node.js，并且脚本会占用 8080 端口。
-- 生成页面后可通过浏览器控制台 `window.__debugVertices()` 调试。
+- 生成的 HTML 不依赖本地 Node 服务端。
+- 页面仍通过 importmap 加载 Three.js CDN，打开 HTML 时需要能访问对应 CDN。
+- 可在浏览器控制台调用 window.__debugVertices() 调试几何点。
